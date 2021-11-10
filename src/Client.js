@@ -204,7 +204,7 @@ class Client extends EventEmitter {
         });
 
         if(isMD) {
-            throw new Error('Multi-device is not yet supported by whatsapp-web.js. Please check out https://github.com/pedroslopez/whatsapp-web.js/pull/889 to follow the progress.');
+            throw new Error('Multi-device ainda não é suportado, desative nas configurações do seu whatsapp');
         }
 
         //Load util functions (serializers, helper functions)
