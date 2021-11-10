@@ -71,12 +71,12 @@ class Client extends EventEmitter {
             !this.options.puppeteer ||
             !this.options.puppeteer.browser ||
             !this.options.puppeteer.browser
-          ) {
-            throw new Error("Browser and page is required");
-          }
+        ) {
+            throw new Error('Browser and page is required');
+        }
       
-          browser = this.options.puppeteer.browser;
-          page = this.options.puppeteer.page;  
+        browser = this.options.puppeteer.browser;
+        page = this.options.puppeteer.page;  
         
         page.setUserAgent(this.options.userAgent);
 
