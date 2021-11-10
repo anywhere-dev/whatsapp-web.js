@@ -1,7 +1,6 @@
 'use strict';
 
 const EventEmitter = require('events');
-const puppeteer = require('puppeteer');
 const moduleRaid = require('@pedroslopez/moduleraid/moduleraid');
 const jsQR = require('jsqr');
 
@@ -68,13 +67,16 @@ class Client extends EventEmitter {
     async initialize() {
         let [browser, page] = [null, null];
         
-        if(this.options.puppeteer && this.options.puppeteer.browserWSEndpoint) {
-            browser = await puppeteer.connect(this.options.puppeteer);
-            page = await browser.newPage();
-        } else {
-            browser = await puppeteer.launch(this.options.puppeteer);
-            page = (await browser.pages())[0];
-        }        
+        if (
+            !this.options.puppeteer ||
+            !this.options.puppeteer.browser ||
+            !this.options.puppeteer.browser
+          ) {
+            throw new Error("Browser and page is required");
+          }
+      
+          browser = this.options.puppeteer.browser;
+          page = this.options.puppeteer.page;  
         
         page.setUserAgent(this.options.userAgent);
 

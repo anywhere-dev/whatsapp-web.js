@@ -38,6 +38,8 @@ exports.Status = {
 exports.Events = {
     AUTHENTICATED: 'authenticated',
     AUTHENTICATION_FAILURE: 'auth_failure',
+    QR_TIMEOUT: 'qr_timeout',
+    NEED_UPDATE: 'need_update',
     READY: 'ready',
     MESSAGE_RECEIVED: 'message',
     MESSAGE_CREATE: 'message_create',
