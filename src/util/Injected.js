@@ -47,6 +47,15 @@ exports.ExposeStore = (moduleRaidStr) => {
             });
         };
     }
+
+    if ('serviceWorker' in navigator) {
+        console.log('PASSOU AQUI');
+        caches.keys().then(function (cacheNames) {
+            cacheNames.forEach(function (cacheName) {
+                caches.delete(cacheName);
+            });
+        });
+    }
 };
 
 exports.LoadUtils = () => {
