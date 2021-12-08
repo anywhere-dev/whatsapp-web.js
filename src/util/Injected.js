@@ -5,7 +5,7 @@ exports.ExposeStore = (moduleRaidStr) => {
     eval('var moduleRaid = ' + moduleRaidStr);
     // eslint-disable-next-line no-undef
     window.mR = moduleRaid();
-    window.Store = window.mR.findModule('Chat')[0].default;
+    window.Store = Object.assign({}, window.mR.findModule('Chat')[0].default);
     window.Store.AppState = window.mR.findModule('STREAM')[0].Socket;
     if (window.mR.findModule('Conn').length > 1) {
         if (typeof window.mR.findModule('Conn')[0].Conn != 'undefined') {
