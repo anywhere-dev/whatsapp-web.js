@@ -65,7 +65,7 @@ class Client extends EventEmitter {
      * Sets up events and requirements, kicks off authentication request
      */
     async initialize() {
-        let [browser, page] = [null, null];
+        let [browser, page, electronWindow] = [null, null, null];
         
         if (
             !this.options.puppeteer ||
@@ -76,7 +76,8 @@ class Client extends EventEmitter {
         }
       
         browser = this.options.puppeteer.browser;
-        page = this.options.puppeteer.page;  
+        page = this.options.puppeteer.page;
+        electronWindow = this.options.puppeteer.electronWindow;  
         
         await page.setUserAgent(this.options.userAgent);
 
@@ -140,23 +141,42 @@ class Client extends EventEmitter {
         } else {
             let qrRetries = 0;
 
-
-            const checkChromeVersion = async () => {
+            const hasVersionSelector = async () => {
                 try {
-                    await page.waitForSelector('.version-title', {
+                    const VERSION_SELECTOR = '.version-title';
+
+                    await page.waitForSelector(VERSION_SELECTOR, {
                         timeout: 3000,
                     });
-                    return false;
-                } catch (e) {
                     return true;
+                } catch (e) {
+                    return false;
                 }
             };
 
-            const checked = await checkChromeVersion();
+            const checkChromeVersion = async (times = 0) => {
+                if (times > 3) {
+                    throw new Error('Versão do chrome inválida');
+                }
 
-            if (!checked) {
-                throw new Error('INVALID_CHROME_VERSION');
-            }
+                const has = await hasVersionSelector();
+
+                if (!has) {
+                    return;
+                }
+
+                if (has) {
+                    electronWindow.webContents.reloadIgnoringCache();
+
+                    // eslint-disable-next-line
+                    return new Promise(async (res) => {
+                        await checkChromeVersion(times + 1);
+                        res();
+                    });
+                }
+            };
+
+            await checkChromeVersion();
 
             const getQrCode = async () => {
                 // Check if retry button is present
