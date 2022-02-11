@@ -140,6 +140,24 @@ class Client extends EventEmitter {
         } else {
             let qrRetries = 0;
 
+
+            const checkChromeVersion = async () => {
+                try {
+                    await page.waitForSelector('.version-title', {
+                        timeout: 3000,
+                    });
+                    return false;
+                } catch (e) {
+                    return true;
+                }
+            };
+
+            const checked = await checkChromeVersion();
+
+            if (!checked) {
+                throw new Error('INVALID_CHROME_VERSION');
+            }
+
             const getQrCode = async () => {
                 // Check if retry button is present
                 var QR_RETRY_SELECTOR = 'div[data-ref] > span > button';
