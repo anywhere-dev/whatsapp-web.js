@@ -118,6 +118,43 @@ class Client extends EventEmitter {
             referer: 'https://whatsapp.com/'
         });
 
+        const hasVersionSelector = async () => {
+            try {
+                const VERSION_SELECTOR = '.version-title';
+
+                await page.waitForSelector(VERSION_SELECTOR, {
+                    timeout: 3000,
+                });
+                return true;
+            } catch (e) {
+                return false;
+            }
+        };
+
+        const checkChromeVersion = async (times = 0) => {
+            if (times > 3) {
+                throw new Error('Versão do chrome inválida');
+            }
+
+            const has = await hasVersionSelector();
+
+            if (!has) {
+                return;
+            }
+
+            if (has) {
+                electronWindow.webContents.reloadIgnoringCache();
+
+                // eslint-disable-next-line
+                return new Promise(async (res) => {
+                    await checkChromeVersion(times + 1);
+                    res();
+                });
+            }
+        };
+
+        await checkChromeVersion();
+
         const INTRO_IMG_SELECTOR = '[data-testid="intro-md-beta-logo-dark"], [data-testid="intro-md-beta-logo-light"], [data-asset-intro-image-light="true"], [data-asset-intro-image-dark="true"]';
         const INTRO_QRCODE_SELECTOR = 'div[data-ref] canvas';
 
@@ -156,43 +193,6 @@ class Client extends EventEmitter {
                 }
                 return;
             }
-
-            const hasVersionSelector = async () => {
-                try {
-                    const VERSION_SELECTOR = '.version-title';
-
-                    await page.waitForSelector(VERSION_SELECTOR, {
-                        timeout: 3000,
-                    });
-                    return true;
-                } catch (e) {
-                    return false;
-                }
-            };
-
-            const checkChromeVersion = async (times = 0) => {
-                if (times > 3) {
-                    throw new Error('Versão do chrome inválida');
-                }
-
-                const has = await hasVersionSelector();
-
-                if (!has) {
-                    return;
-                }
-
-                if (has) {
-                    electronWindow.webContents.reloadIgnoringCache();
-
-                    // eslint-disable-next-line
-                    return new Promise(async (res) => {
-                        await checkChromeVersion(times + 1);
-                        res();
-                    });
-                }
-            };
-
-            await checkChromeVersion();
 
             const QR_CONTAINER = 'div[data-ref]';
             const QR_RETRY_BUTTON = 'div[data-ref] > span > button';
