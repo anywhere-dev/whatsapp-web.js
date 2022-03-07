@@ -37,8 +37,6 @@ exports.ExposeStore = (moduleRaidStr) => {
     window.Store.Sticker = window.mR.findModule('Sticker')[0].Sticker;
     window.Store.User = window.mR.findModule('getMaybeMeUser')[0];
     window.Store.UploadUtils = window.mR.findModule((module) => (module.default && module.default.encryptAndUpload) ? module.default : null)[0].default;
-    window.Store.USyncQuery = window.mR.findModule('USyncQuery')[0].USyncQuery;
-    window.Store.USyncUser = window.mR.findModule('USyncUser')[0].USyncUser;
     window.Store.UserConstructor = window.mR.findModule((module) => (module.default && module.default.prototype && module.default.prototype.isServer && module.default.prototype.isUser) ? module.default : null)[0].default;
     window.Store.Validators = window.mR.findModule('findLinks')[0];
     window.Store.VCard = window.mR.findModule('vcardFromContactModel')[0];
@@ -161,12 +159,16 @@ exports.LoadUtils = () => {
 
         if (options.linkPreview) {
             delete options.linkPreview;
-            const link = window.Store.Validators.findLink(content);
-            if (link) {
-                const preview = await window.Store.Wap.queryLinkPreview(link.url);
-                preview.preview = true;
-                preview.subtype = 'url';
-                options = { ...options, ...preview };
+
+            // Not supported yet by WhatsApp Web on MD
+            if(!window.Store.Features.features.MD_BACKEND) {
+                const link = window.Store.Validators.findLink(content);
+                if (link) {
+                    const preview = await window.Store.Wap.queryLinkPreview(link.url);
+                    preview.preview = true;
+                    preview.subtype = 'url';
+                    options = { ...options, ...preview };
+                }
             }
         }
         
@@ -554,8 +556,9 @@ exports.LoadUtils = () => {
         return (chat.labels || []).map(id => window.WWebJS.getLabel(id));
     };
 
-    window.WWebJS.getOrderDetail = async (orderId, token) => {
-        return window.Store.QueryOrder.queryOrder(orderId, 80, 80, token);
+    window.WWebJS.getOrderDetail = async (orderId, token, chatId) => {
+        const chatWid = window.Store.WidFactory.createWid(chatId);
+        return window.Store.QueryOrder.queryOrder(chatWid, orderId, 80, 80, token);
     };
 
     window.WWebJS.getProductMetadata = async (productId) => {

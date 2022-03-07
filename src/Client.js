@@ -12,16 +12,19 @@ const { ExposeStore, LoadUtils } = require('./util/Injected');
 const ChatFactory = require('./factories/ChatFactory');
 const ContactFactory = require('./factories/ContactFactory');
 const { ClientInfo, Message, MessageMedia, Contact, Location, GroupNotification, Label, Call, Buttons, List } = require('./structures');
+const LegacySessionAuth = require('./authStrategies/LegacySessionAuth');
+const NoAuth = require('./authStrategies/NoAuth');
+
 /**
  * Starting point for interacting with the WhatsApp Web API
  * @extends {EventEmitter}
  * @param {object} options - Client options
+ * @param {AuthStrategy} options.authStrategy - Determines how to save and restore sessions. Will use LegacySessionAuth if options.session is set. Otherwise, NoAuth will be used.
  * @param {number} options.authTimeoutMs - Timeout for authentication selector in puppeteer
  * @param {object} options.puppeteer - Puppeteer launch options. View docs here: https://github.com/puppeteer/puppeteer/
  * @param {number} options.qrMaxRetries - How many times should the qrcode be refreshed before giving up
- * @param {string} options.restartOnAuthFail  - Restart client with a new session (i.e. use null 'session' var) if authentication fails
- * @param {boolean} options.useDeprecatedSessionAuth - Enable JSON-based authentication. This is deprecated due to not being supported by MultiDevice, and will be removed in a future version.
- * @param {object} options.session - This is deprecated due to not being supported by MultiDevice, and will be removed in a future version.
+ * @param {string} options.restartOnAuthFail  - @deprecated This option should be set directly on the LegacySessionAuth.
+ * @param {object} options.session - @deprecated Only here for backwards-compatibility. You should move to using LocalAuth, or set the authStrategy to LegacySessionAuth explicitly. 
  * @param {number} options.takeoverOnConflict - If another whatsapp web session is detected (another browser), take over the session in the current browser
  * @param {number} options.takeoverTimeoutMs - How much time to wait before taking over the session
  * @param {string} options.dataPath - Change the default path for saving session files, default is: "./WWebJS/"
@@ -51,6 +54,27 @@ class Client extends EventEmitter {
         super();
 
         this.options = Util.mergeDefault(DefaultOptions, options);
+        
+        if(!this.options.authStrategy) {
+            if(Object.prototype.hasOwnProperty.call(this.options, 'session')) {
+                process.emitWarning(
+                    'options.session is deprecated and will be removed in a future release due to incompatibility with multi-device. ' +
+                    'Use the LocalAuth authStrategy, don\'t pass in a session as an option, or suppress this warning by using the LegacySessionAuth strategy explicitly (see https://wwebjs.dev/guide/authentication.html#legacysessionauth-strategy).',
+                    'DeprecationWarning'
+                );
+
+                this.authStrategy = new LegacySessionAuth({
+                    session: this.options.session,
+                    restartOnAuthFail: this.options.restartOnAuthFail
+                });
+            } else {
+                this.authStrategy = new NoAuth();
+            }
+        } else {
+            this.authStrategy = this.options.authStrategy;
+        }
+
+        this.authStrategy.setup(this);
 
         this.id = this.options.clientId;
 
@@ -77,6 +101,8 @@ class Client extends EventEmitter {
     async initialize() {
         let [browser, page, electronWindow] = [null, null, null];
         
+        await this.authStrategy.beforeBrowserInitialized();
+
         if (
             !this.options.puppeteer ||
             !this.options.puppeteer.browser ||
@@ -90,27 +116,12 @@ class Client extends EventEmitter {
         electronWindow = this.options.puppeteer.electronWindow;  
         
         await page.setUserAgent(this.options.userAgent);
+        if (this.options.bypassCSP) await page.setBypassCSP(true);
 
         this.pupBrowser = browser;
         this.pupPage = page;
 
-        if (this.options.useDeprecatedSessionAuth && this.options.session) {
-            await page.evaluateOnNewDocument(session => {
-                if (document.referrer === 'https://whatsapp.com/') {
-                    localStorage.clear();
-                    localStorage.setItem('WABrowserId', session.WABrowserId);
-                    localStorage.setItem('WASecretBundle', session.WASecretBundle);
-                    localStorage.setItem('WAToken1', session.WAToken1);
-                    localStorage.setItem('WAToken2', session.WAToken2);
-                }
-
-                localStorage.setItem('remember-me', 'true');
-            }, this.options.session);
-        }
-
-        if (this.options.bypassCSP) {
-            await page.setBypassCSP(true);
-        }
+        await this.authStrategy.afterBrowserInitialized();
 
         await page.goto(WhatsWebURL, {
             waitUntil: 'load',
@@ -154,7 +165,7 @@ class Client extends EventEmitter {
         };
 
         await checkChromeVersion();
-
+        
         const INTRO_IMG_SELECTOR = '[data-testid="intro-md-beta-logo-dark"], [data-testid="intro-md-beta-logo-light"], [data-asset-intro-image-light="true"], [data-asset-intro-image-dark="true"]';
         const INTRO_QRCODE_SELECTOR = 'div[data-ref] canvas';
 
@@ -177,27 +188,27 @@ class Client extends EventEmitter {
 
         // Scan-qrcode selector was found. Needs authentication
         if (needAuthentication) {
-            if(this.options.session) {
+            const { failed, failureEventPayload, restart } = await this.authStrategy.onAuthenticationNeeded();
+
+            if(failed) {
                 /**
                  * Emitted when there has been an error while trying to restore an existing session
                  * @event Client#auth_failure
                  * @param {string} message
-                 * @deprecated
                  */
-                this.emit(Events.AUTHENTICATION_FAILURE, 'Unable to log in. Are the session details valid?');
+                this.emit(Events.AUTHENTICATION_FAILURE, failureEventPayload);
                 await this.destroy();
-                if (this.options.restartOnAuthFail) {
+                if (restart) {
                     // session restore failed so try again but without session to force new authentication
-                    this.options.session = null;
                     return this.initialize();
                 }
                 return;
             }
 
+
             const QR_CONTAINER = 'div[data-ref]';
             const QR_RETRY_BUTTON = 'div[data-ref] > span > button';
             let qrRetries = 0;
-            
             await page.exposeFunction('qrChanged', async (qr) => {
                 /**
                 * Emitted when a QR code is received
@@ -261,20 +272,7 @@ class Client extends EventEmitter {
         }
 
         await page.evaluate(ExposeStore, moduleRaid.toString());
-        let authEventPayload = undefined;
-        if (this.options.useDeprecatedSessionAuth) {
-            // Get session tokens
-            const localStorage = JSON.parse(await page.evaluate(() => {
-                return JSON.stringify(window.localStorage);
-            }));
-
-            authEventPayload = {
-                WABrowserId: localStorage.WABrowserId,
-                WASecretBundle: localStorage.WASecretBundle,
-                WAToken1: localStorage.WAToken1,
-                WAToken2: localStorage.WAToken2
-            };
-        }
+        const authEventPayload = await this.authStrategy.getAuthEventPayload();
 
         /**
          * Emitted when authentication is successful
@@ -285,22 +283,13 @@ class Client extends EventEmitter {
         // Check window.Store Injection
         await page.waitForFunction('window.Store != undefined');
 
-        const isMD = await page.evaluate(() => {
-            return window.Store.Features.features.MD_BACKEND;
-        });
-
         await page.evaluate(async () => {
             // safely unregister service workers
             const registrations = await navigator.serviceWorker.getRegistrations();
             for (let registration of registrations) {
                 registration.unregister();
             }
-
         });
-
-        if (this.options.useDeprecatedSessionAuth && isMD) {
-            throw new Error('Authenticating via JSON session is not supported for MultiDevice-enabled WhatsApp accounts.');
-        }
 
         //Load util functions (serializers, helper functions)
         await page.evaluate(LoadUtils);
@@ -555,9 +544,7 @@ class Client extends EventEmitter {
             return window.Store.AppState.logout();
         });
 
-        if (this.dataDir) {
-            return (fs.rmSync ? fs.rmSync : fs.rmdirSync).call(this.dataDir, { recursive: true });
-        }
+        await this.authStrategy.logout();
     }
 
     /**
@@ -587,7 +574,7 @@ class Client extends EventEmitter {
     /**
      * Message options.
      * @typedef {Object} MessageSendOptions
-     * @property {boolean} [linkPreview=false] - Show links preview.
+     * @property {boolean} [linkPreview=true] - Show links preview. Has no effect on multi-device accounts.
      * @property {boolean} [sendAudioAsVoice=false] - Send audio as voice message
      * @property {boolean} [sendVideoAsGif=false] - Send video as gif
      * @property {boolean} [sendMediaAsSticker=false] - Send media as a sticker
@@ -947,11 +934,20 @@ class Client extends EventEmitter {
      * @returns {Promise<string>}
      */
     async getProfilePicUrl(contactId) {
-        const profilePic = await this.pupPage.evaluate((contactId) => {
-            const chatWid = window.Store.WidFactory.createWid(contactId);
-            return window.Store.getProfilePicFull(chatWid);
+        const profilePic = await this.pupPage.evaluate(async contactId => {
+            let asyncPic;
+            if (window.Store.Features.features.MD_BACKEND) {
+                const chatWid = window.Store.WidFactory.createWid(contactId);
+                asyncPic = await window.Store.getProfilePicFull(chatWid).catch(() => {
+                    return undefined;
+                });
+            } else {
+                asyncPic = await window.Store.Wap.profilePicFind(contactId).catch(() => {
+                    return undefined;
+                });
+            }
+            return asyncPic;
         }, contactId);
-
         return profilePic ? profilePic.eurl : undefined;
     }
 
