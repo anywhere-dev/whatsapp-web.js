@@ -1,7 +1,5 @@
 'use strict';
 
-const path = require('path');
-const fs = require('fs');
 const EventEmitter = require('events');
 const moduleRaid = require('@pedroslopez/moduleraid/moduleraid');
 
