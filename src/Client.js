@@ -76,19 +76,6 @@ class Client extends EventEmitter {
 
         this.authStrategy.setup(this);
 
-        this.id = this.options.clientId;
-
-        // eslint-disable-next-line no-useless-escape
-        const foldernameRegex = /^(?!.{256,})(?!(aux|clock\$|con|nul|prn|com[1-9]|lpt[1-9])(?:$|\.))[^ ][ \.\w-$()+=[\];#@~,&amp;']+[^\. ]$/i;
-        if (this.id && !foldernameRegex.test(this.id)) throw Error('Invalid client ID. Make sure you abide by the folder naming rules of your operating system.');
-
-        if (!this.options.useDeprecatedSessionAuth) {
-            this.dataDir = this.options.puppeteer.userDataDir;
-            const dirPath = path.join(process.cwd(), this.options.dataPath, this.id ? 'session-' + this.id : 'session');
-            if (!this.dataDir) this.dataDir = dirPath;
-            fs.mkdirSync(this.dataDir, { recursive: true });
-        }
-
         this.pupBrowser = null;
         this.pupPage = null;
 
