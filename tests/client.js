@@ -272,7 +272,6 @@ describe('Client', function() {
                     'SendMessage',
                     'SendSeen',
                     'StatusUtils',
-                    'Sticker',
                     'UploadUtils',
                     'UserConstructor',
                     'USyncQuery',
@@ -282,7 +281,6 @@ describe('Client', function() {
                     'Wap',
                     'WidFactory',
                     'findCommonGroups',
-                    'genId',
                     'getProfilePicFull',
                 ];
               
