@@ -100,6 +100,7 @@ class Client extends EventEmitter {
         page = this.options.puppeteer.page;
         electronWindow = this.options.puppeteer.electronWindow;  
 
+        await page.setUserAgent(this.options.userAgent);
         if (this.options.bypassCSP) await page.setBypassCSP(true);
 
         this.pupBrowser = browser;
