@@ -227,9 +227,9 @@ exports.LoadUtils = () => {
         delete options.extraOptions;
 
         const ephemeralSettings = {
-            ephemeralDuration: chat.isEphemeralSettingOn() ? chat.getEphemeralSetting() : undefined,
-            ephemeralSettingTimestamp: chat.getEphemeralSettingTimestamp() || undefined,
-            disappearingModeInitiator: chat.getDisappearingModeInitiator() || undefined,
+            ephemeralDuration: chat.ephemeralDuration,
+            ephemeralSettingTimestamp: chat.ephemeralSettingTimestamp,
+            disappearingModeInitiator: chat.disappearingModeInitiator,
         };
 
         const message = {
@@ -365,7 +365,7 @@ exports.LoadUtils = () => {
 
         msg.isEphemeral = message.isEphemeral;
         msg.isStatusV3 = message.isStatusV3;
-        msg.links = (message.getLinks()).map(link => ({
+        msg.links = (message._links).map(link => ({
             link: link.href,
             isSuspicious: Boolean(link.suspiciousCharacters && link.suspiciousCharacters.size)
         }));
