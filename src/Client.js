@@ -160,6 +160,38 @@ class Client extends EventEmitter {
             }
         };
 
+        await page.evaluate(function (selectors) {
+            function checkAndUpdateCookie(name, value) {
+                // Função para obter o valor de um cookie pelo nome dele
+                function getCookie(name) {
+                    let cookieArray = document.cookie.split(";");
+                    for (let i = 0; i < cookieArray.length; i++) {
+                        let cookiePair = cookieArray[i].split("=");
+                        if (name == cookiePair[0].trim()) {
+                            return decodeURIComponent(cookiePair[1]);
+                        }
+                    }
+                    return null;
+                }
+
+                let cookieValue = getCookie(name);
+
+                // Se o cookie não existir ou se deseja atualizar o valor
+                if (cookieValue === null || cookieValue !== value) {
+                    // Definindo o cookie com o valor especificado
+                    document.cookie =
+                        name +
+                        "=" +
+                        encodeURIComponent(value) +
+                        ";path=/;domain=.web.whatsapp.com;";
+                    location.reload();
+                }
+            }
+
+            // Seta o valor como w, pois quero que funcione. Para testes com a versão nova, coloque o valor como c
+            checkAndUpdateCookie("wa_build", "w");
+        });
+
         await checkChromeVersion();
 
         await page.evaluate(`function getElementByXpath(path) {
