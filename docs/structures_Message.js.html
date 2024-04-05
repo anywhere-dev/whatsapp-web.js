@@ -2,9 +2,9 @@
 <html>
 
 <head>
-  <meta name="generator" content="JSDoc 3.6.7">
+  <meta name="generator" content="JSDoc 3.6.11">
   <meta charset="utf-8">
-  <title>whatsapp-web.js 1.17.1 &raquo; Source: structures/Message.js</title>
+  <title>whatsapp-web.js 1.23.0 &raquo; Source: structures/Message.js</title>
   <link rel="stylesheet" href="https://brick.a.ssl.fastly.net/Karla:400,400i,700,700i" type="text/css">
   <link rel="stylesheet" href="https://brick.a.ssl.fastly.net/Noto+Serif:400,400i,700,700i" type="text/css">
   <link rel="stylesheet" href="https://brick.a.ssl.fastly.net/Inconsolata:500" type="text/css">
@@ -15,7 +15,7 @@
   <nav id="jsdoc-navbar" role="navigation" class="jsdoc-navbar">
     <div id="jsdoc-navbar-container">
       <div id="jsdoc-navbar-content">
-        <a href="index.html" class="jsdoc-navbar-package-name">whatsapp-web.<wbr>js 1.<wbr>17.<wbr>1</a>
+        <a href="index.html" class="jsdoc-navbar-package-name">whatsapp-web.<wbr>js 1.<wbr>23.<wbr>0</a>
       </div>
     </div>
   </nav>
@@ -36,7 +36,9 @@ const MessageMedia &#x3D; require(&#x27;./MessageMedia&#x27;);
 const Location &#x3D; require(&#x27;./Location&#x27;);
 const Order &#x3D; require(&#x27;./Order&#x27;);
 const Payment &#x3D; require(&#x27;./Payment&#x27;);
-const { MessageTypes } &#x3D; require(&#x27;../util/Constants&#x27;);
+const Reaction &#x3D; require(&#x27;./Reaction&#x27;);
+const {MessageTypes} &#x3D; require(&#x27;../util/Constants&#x27;);
+const {Contact} &#x3D; require(&#x27;./Contact&#x27;);
 
 /**
  * Represents a Message on WhatsApp
@@ -80,7 +82,7 @@ class Message extends Base {
          * Message content
          * @type {string}
          */
-        this.body &#x3D; this.hasMedia ? data.caption || &#x27;&#x27; : data.body || &#x27;&#x27;;
+        this.body &#x3D; this.hasMedia ? data.caption || &#x27;&#x27; : data.body || data.pollName || &#x27;&#x27;;
 
         /**
          * Message type
@@ -119,8 +121,7 @@ class Message extends Base {
          * String that represents from which device type the message was sent
          * @type {string}
          */
-        this.deviceType &#x3D; data.id.id.length &gt; 21 ? &#x27;android&#x27; : data.id.id.substring(0, 2) &#x3D;&#x3D; &#x27;3A&#x27; ? &#x27;ios&#x27; : &#x27;web&#x27;;
-
+        this.deviceType &#x3D; typeof data.id.id &#x3D;&#x3D;&#x3D; &#x27;string&#x27; &amp;amp;&amp;amp; data.id.id.length &gt; 21 ? &#x27;android&#x27; : typeof data.id.id &#x3D;&#x3D;&#x3D; &#x27;string&#x27; &amp;amp;&amp;amp; data.id.id.substring(0, 2) &#x3D;&#x3D;&#x3D; &#x27;3A&#x27; ? &#x27;ios&#x27; : &#x27;web&#x27;;
         /**
          * Indicates if the message was forwarded
          * @type {boolean}
@@ -139,7 +140,7 @@ class Message extends Base {
          * Indicates if the message is a status update
          * @type {boolean}
          */
-        this.isStatus &#x3D; data.isStatusV3;
+        this.isStatus &#x3D; data.isStatusV3 || data.id.remote &#x3D;&#x3D;&#x3D; &#x27;status@broadcast&#x27;;
 
         /**
          * Indicates if the message was starred
@@ -166,6 +167,12 @@ class Message extends Base {
         this.hasQuotedMsg &#x3D; data.quotedMsg ? true : false;
 
         /**
+         * Indicates whether there are reactions to the message
+         * @type {boolean}
+         */
+        this.hasReaction &#x3D; data.hasReaction ? true : false;
+
+        /**
          * Indicates the duration of the message in seconds
          * @type {string}
          */
@@ -175,7 +182,21 @@ class Message extends Base {
          * Location information contained in the message, if the message is type &quot;location&quot;
          * @type {Location}
          */
-        this.location &#x3D; data.type &#x3D;&#x3D;&#x3D; MessageTypes.LOCATION ? new Location(data.lat, data.lng, data.loc) : undefined;
+        this.location &#x3D; (() &#x3D;&gt; {
+            if (data.type !&#x3D;&#x3D; MessageTypes.LOCATION) {
+                return undefined;
+            }
+            let description;
+            if (data.loc &amp;amp;&amp;amp; typeof data.loc &#x3D;&#x3D;&#x3D; &#x27;string&#x27;) {
+                let splitted &#x3D; data.loc.split(&#x27;\n&#x27;);
+                description &#x3D; {
+                    name: splitted[0],
+                    address: splitted[1],
+                    url: data.clientUrl
+                };
+            }
+            return new Location(data.lat, data.lng, description);
+        })();
 
         /**
          * List of vCards contained in the message.
@@ -192,8 +213,8 @@ class Message extends Base {
             inviteCodeExp: data.inviteCodeExp,
             groupId: data.inviteGrp,
             groupName: data.inviteGrpName,
-            fromId: data.from._serialized,
-            toId: data.to._serialized
+            fromId: &#x27;_serialized&#x27; in data.from ? data.from._serialized : data.from,
+            toId: &#x27;_serialized&#x27; in data.to ? data.to._serialized : data.to
         } : undefined;
 
         /**
@@ -249,6 +270,16 @@ class Message extends Base {
             this.productId &#x3D; data.productId;
         }
 
+        /** Last edit time */
+        if (data.latestEditSenderTimestampMs) {
+            this.latestEditSenderTimestampMs &#x3D; data.latestEditSenderTimestampMs;
+        }
+
+        /** Last edit message author */
+        if (data.latestEditMsgKey) {
+            this.latestEditMsgKey &#x3D; data.latestEditMsgKey;
+        }
+        
         /**
          * Links included in the message.
          * @type {Array&amp;lt;{link: string, isSuspicious: boolean}&gt;}
@@ -269,6 +300,20 @@ class Message extends Base {
         /** Selected List row Id **/
         if (data.listResponse &amp;amp;&amp;amp; data.listResponse.singleSelectReply.selectedRowId) {
             this.selectedRowId &#x3D; data.listResponse.singleSelectReply.selectedRowId;
+        }
+
+        if (this.type &#x3D;&#x3D;&#x3D; MessageTypes.POLL_CREATION) {
+            this.pollName &#x3D; data.pollName;
+            this.pollOptions &#x3D; data.pollOptions;
+            this.allowMultipleAnswers &#x3D; Boolean(!data.pollSelectableOptionsCount);
+            this.pollInvalidated &#x3D; data.pollInvalidated;
+            this.isSentCagPollCreation &#x3D; data.isSentCagPollCreation;
+
+            delete this._data.pollName;
+            delete this._data.pollOptions;
+            delete this._data.pollSelectableOptionsCount;
+            delete this._data.pollInvalidated;
+            delete this._data.isSentCagPollCreation;
         }
 
         return super._patch(data);
@@ -336,8 +381,9 @@ class Message extends Base {
         if (!this.hasQuotedMsg) return undefined;
 
         const quotedMsg &#x3D; await this.client.pupPage.evaluate((msgId) &#x3D;&gt; {
-            let msg &#x3D; window.Store.Msg.get(msgId);
-            return msg.quotedMsgObj().serialize();
+            const msg &#x3D; window.Store.Msg.get(msgId);
+            const quotedMsg &#x3D; window.Store.QuotedMsg.getQuotedMsgObj(msg);
+            return window.WWebJS.getMessageModel(quotedMsg);
         }, this.id._serialized);
 
         return new Message(this.client, quotedMsg);
@@ -373,6 +419,8 @@ class Message extends Base {
      */
     async react(reaction){
         await this.client.pupPage.evaluate(async (messageId, reaction) &#x3D;&gt; {
+            if (!messageId) { return undefined; }
+            
             const msg &#x3D; await window.Store.Msg.get(messageId);
             await window.Store.sendReactionToMsg(msg, reaction);
         }, this.id._serialized, reaction);
@@ -387,7 +435,7 @@ class Message extends Base {
     }
 
     /**
-     * Forwards this message to another chat
+     * Forwards this message to another chat (that you chatted before, otherwise it will fail)
      *
      * @param {string|Chat} chat Chat model or chat ID to which the message will be forwarded
      * @returns {Promise}
@@ -414,7 +462,9 @@ class Message extends Base {
 
         const result &#x3D; await this.client.pupPage.evaluate(async (msgId) &#x3D;&gt; {
             const msg &#x3D; window.Store.Msg.get(msgId);
-
+            if (!msg) {
+                return undefined;
+            }
             if (msg.mediaData.mediaStage !&#x3D; &#x27;RESOLVED&#x27;) {
                 // try to resolve media
                 await msg.downloadMedia({
@@ -429,7 +479,7 @@ class Message extends Base {
             }
 
             try {
-                const decryptedMedia &#x3D; await window.Store.DownloadManager.downloadAndDecrypt({
+                const decryptedMedia &#x3D; await window.Store.DownloadManager.downloadAndMaybeDecrypt({
                     directPath: msg.directPath,
                     encFilehash: msg.encFilehash,
                     filehash: msg.filehash,
@@ -439,12 +489,13 @@ class Message extends Base {
                     signal: (new AbortController).signal
                 });
 
-                const data &#x3D; window.WWebJS.arrayBufferToBase64(decryptedMedia);
+                const data &#x3D; await window.WWebJS.arrayBufferToBase64Async(decryptedMedia);
 
                 return {
                     data,
                     mimetype: msg.mimetype,
-                    filename: msg.filename
+                    filename: msg.filename,
+                    filesize: msg.size
                 };
             } catch (e) {
                 if(e.status &amp;amp;&amp;amp; e.status &#x3D;&#x3D;&#x3D; 404) return undefined;
@@ -453,22 +504,24 @@ class Message extends Base {
         }, this.id._serialized);
 
         if (!result) return undefined;
-        return new MessageMedia(result.mimetype, result.data, result.filename);
+        return new MessageMedia(result.mimetype, result.data, result.filename, result.filesize);
     }
 
     /**
      * Deletes a message from the chat
-     * @param {?boolean} everyone If true and the message is sent by the current user, will delete it for everyone in the chat.
+     * @param {?boolean} everyone If true and the message is sent by the current user or the user is an admin, will delete it for everyone in the chat.
      */
     async delete(everyone) {
-        await this.client.pupPage.evaluate((msgId, everyone) &#x3D;&gt; {
+        await this.client.pupPage.evaluate(async (msgId, everyone) &#x3D;&gt; {
             let msg &#x3D; window.Store.Msg.get(msgId);
-
-            if (everyone &amp;amp;&amp;amp; msg.id.fromMe &amp;amp;&amp;amp; msg._canRevoke()) {
-                return window.Store.Cmd.sendRevokeMsgs(msg.chat, [msg], {type: &#x27;Sender&#x27;});
+            let chat &#x3D; await window.Store.Chat.find(msg.id.remote);
+            
+            const canRevoke &#x3D; window.Store.MsgActionChecks.canSenderRevokeMsg(msg) || window.Store.MsgActionChecks.canAdminRevokeMsg(msg);
+            if (everyone &amp;amp;&amp;amp; canRevoke) {
+                return window.Store.Cmd.sendRevokeMsgs(chat, [msg], { clearMedia: true, type: msg.id.fromMe ? &#x27;Sender&#x27; : &#x27;Admin&#x27; });
             }
 
-            return window.Store.Cmd.sendDeleteMsgs(msg.chat, [msg], true);
+            return window.Store.Cmd.sendDeleteMsgs(chat, [msg], true);
         }, this.id._serialized, everyone);
     }
 
@@ -476,11 +529,12 @@ class Message extends Base {
      * Stars this message
      */
     async star() {
-        await this.client.pupPage.evaluate((msgId) &#x3D;&gt; {
+        await this.client.pupPage.evaluate(async (msgId) &#x3D;&gt; {
             let msg &#x3D; window.Store.Msg.get(msgId);
-
-            if (msg.canStar()) {
-                return window.Store.Cmd.sendStarMsgs(msg.chat, [msg], false);
+            
+            if (window.Store.MsgActionChecks.canStarMsg(msg)) {
+                let chat &#x3D; await window.Store.Chat.find(msg.id.remote);
+                return window.Store.Cmd.sendStarMsgs(chat, [msg], false);
             }
         }, this.id._serialized);
     }
@@ -489,11 +543,12 @@ class Message extends Base {
      * Unstars this message
      */
     async unstar() {
-        await this.client.pupPage.evaluate((msgId) &#x3D;&gt; {
+        await this.client.pupPage.evaluate(async (msgId) &#x3D;&gt; {
             let msg &#x3D; window.Store.Msg.get(msgId);
 
-            if (msg.canStar()) {
-                return window.Store.Cmd.sendUnstarMsgs(msg.chat, [msg], false);
+            if (window.Store.MsgActionChecks.canStarMsg(msg)) {
+                let chat &#x3D; await window.Store.Chat.find(msg.id.remote);
+                return window.Store.Cmd.sendUnstarMsgs(chat, [msg], false);
             }
         }, this.id._serialized);
     }
@@ -518,7 +573,7 @@ class Message extends Base {
             const msg &#x3D; window.Store.Msg.get(msgId);
             if (!msg) return null;
 
-            return await window.Store.MessageInfo.sendQueryMsgInfo(msg);
+            return await window.Store.MessageInfo.sendQueryMsgInfo(msg.id);
         }, this.id._serialized);
 
         return info;
@@ -553,6 +608,80 @@ class Message extends Base {
         }
         return undefined;
     }
+
+
+    /**
+     * Reaction List
+     * @typedef {Object} ReactionList
+     * @property {string} id Original emoji
+     * @property {string} aggregateEmoji aggregate emoji
+     * @property {boolean} hasReactionByMe Flag who sent the reaction
+     * @property {Array&amp;lt;Reaction&gt;} senders Reaction senders, to this message
+     */
+
+    /**
+     * Gets the reactions associated with the given message
+     * @return {Promise&amp;lt;ReactionList[]&gt;}
+     */
+    async getReactions() {
+        if (!this.hasReaction) {
+            return undefined;
+        }
+
+        const reactions &#x3D; await this.client.pupPage.evaluate(async (msgId) &#x3D;&gt; {
+            const msgReactions &#x3D; await window.Store.Reactions.find(msgId);
+            if (!msgReactions || !msgReactions.reactions.length) return null;
+            return msgReactions.reactions.serialize();
+        }, this.id._serialized);
+
+        if (!reactions) {
+            return undefined;
+        }
+
+        return reactions.map(reaction &#x3D;&gt; {
+            reaction.senders &#x3D; reaction.senders.map(sender &#x3D;&gt; {
+                sender.timestamp &#x3D; Math.round(sender.timestamp / 1000);
+                return new Reaction(this.client, sender);
+            });
+            return reaction;
+        });
+    }
+
+    /**
+     * Edits the current message.
+     * @param {string} content
+     * @param {MessageEditOptions} [options] - Options used when editing the message
+     * @returns {Promise&amp;lt;?Message&gt;}
+     */
+    async edit(content, options &#x3D; {}) {
+        if (options.mentions &amp;amp;&amp;amp; options.mentions.some(possiblyContact &#x3D;&gt; possiblyContact instanceof Contact)) {
+            options.mentions &#x3D; options.mentions.map(a &#x3D;&gt; a.id._serialized);
+        }
+        let internalOptions &#x3D; {
+            linkPreview: options.linkPreview &#x3D;&#x3D;&#x3D; false ? undefined : true,
+            mentionedJidList: Array.isArray(options.mentions) ? options.mentions : [],
+            extraOptions: options.extra
+        };
+        
+        if (!this.fromMe) {
+            return null;
+        }
+        const messageEdit &#x3D; await this.client.pupPage.evaluate(async (msgId, message, options) &#x3D;&gt; {
+            let msg &#x3D; window.Store.Msg.get(msgId);
+            if (!msg) return null;
+
+            let catEdit &#x3D; (msg.type &#x3D;&#x3D;&#x3D; &#x27;chat&#x27; &amp;amp;&amp;amp; window.Store.MsgActionChecks.canEditText(msg));
+            if (catEdit) {
+                const msgEdit &#x3D; await window.WWebJS.editMessage(msg, message, options);
+                return msgEdit.serialize();
+            }
+            return null;
+        }, this.id._serialized, content, internalOptions);
+        if (messageEdit) {
+            return new Message(this.client, messageEdit);
+        }
+        return null;
+    }
 }
 
 module.exports &#x3D; Message;
@@ -566,7 +695,7 @@ module.exports &#x3D; Message;
   <footer id="jsdoc-footer" class="jsdoc-footer">
     <div id="jsdoc-footer-container">
       <p>
-        Generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc</a> 3.6.7 on July 10, 2022.
+        Generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc</a> 3.6.11 on October 21, 2023.
       </p>
     </div>
   </footer>
