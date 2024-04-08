@@ -6,12 +6,13 @@ const moduleRaid = require("@pedroslopez/moduleraid/moduleraid");
 const Util = require('./util/Util');
 const InterfaceController = require('./util/InterfaceController');
 const { WhatsWebURL, DefaultOptions, Events, WAState } = require('./util/Constants');
-const { ExposeStore, LoadUtils } = require('./util/Injected');
+const { ExposeStore } = require('./util/Injected/Store');
+const { LoadUtils } = require('./util/Injected/Utils');
+const { ExposeLegacyStore } = require('./util/Injected/LegacyStore');
 const ChatFactory = require('./factories/ChatFactory');
 const ContactFactory = require('./factories/ContactFactory');
 const WebCacheFactory = require('./webCache/WebCacheFactory');
 const { ClientInfo, Message, MessageMedia, Contact, Location, Poll, GroupNotification, Label, Call, Buttons, List, Reaction } = require('./structures');
-const LegacySessionAuth = require('./authStrategies/LegacySessionAuth');
 const NoAuth = require('./authStrategies/NoAuth');
 
 /**
@@ -30,7 +31,7 @@ const NoAuth = require('./authStrategies/NoAuth');
  * @param {number} options.takeoverTimeoutMs - How much time to wait before taking over the session
  * @param {string} options.dataPath - Change the default path for saving session files, default is: "./WWebJS/"
  * @param {string} options.userAgent - User agent to use in puppeteer
- * @param {string} options.ffmpegPath - Ffmpeg path to use when formating videos to webp while sending stickers
+ * @param {string} options.ffmpegPath - Ffmpeg path to use when formatting videos to webp while sending stickers 
  * @param {boolean} options.bypassCSP - Sets bypassing of page's Content-Security-Policy.
  * @param {object} options.proxyAuthentication - Proxy Authentication object.
  * 
@@ -43,6 +44,8 @@ const NoAuth = require('./authStrategies/NoAuth');
  * @fires Client#message_create
  * @fires Client#message_revoke_me
  * @fires Client#message_revoke_everyone
+ * @fires Client#message_ciphertext
+ * @fires Client#message_edit
  * @fires Client#media_uploaded
  * @fires Client#group_join
  * @fires Client#group_leave
@@ -58,22 +61,9 @@ class Client extends EventEmitter {
         super();
 
         this.options = Util.mergeDefault(DefaultOptions, options);
-
-        if (!this.options.authStrategy) {
-            if (Object.prototype.hasOwnProperty.call(this.options, "session")) {
-                process.emitWarning(
-                    "options.session is deprecated and will be removed in a future release due to incompatibility with multi-device. " +
-                        "Use the LocalAuth authStrategy, don't pass in a session as an option, or suppress this warning by using the LegacySessionAuth strategy explicitly (see https://wwebjs.dev/guide/authentication.html#legacysessionauth-strategy).",
-                    "DeprecationWarning"
-                );
-
-                this.authStrategy = new LegacySessionAuth({
-                    session: this.options.session,
-                    restartOnAuthFail: this.options.restartOnAuthFail,
-                });
-            } else {
-                this.authStrategy = new NoAuth();
-            }
+        
+        if(!this.options.authStrategy) {
+            this.authStrategy = new NoAuth();
         } else {
             this.authStrategy = this.options.authStrategy;
         }
@@ -82,6 +72,8 @@ class Client extends EventEmitter {
 
         this.pupBrowser = null;
         this.pupPage = null;
+
+        this.currentIndexHtml = null;
 
         Util.setFfmpegPath(this.options.ffmpegPath);
     }
@@ -119,6 +111,19 @@ class Client extends EventEmitter {
         await this.authStrategy.afterBrowserInitialized();
         await this.initWebVersionCache();
 
+        // ocVersion (isOfficialClient patch)
+        // remove on after 2.3000.x
+        await page.evaluateOnNewDocument(() => {
+            const originalError = Error;
+            //eslint-disable-next-line no-global-assign
+            Error = function (message) {
+                const error = new originalError(message);
+                const originalStack = error.stack;
+                if (error.stack.includes('moduleRaid')) error.stack = originalStack + '\n    at https://web.whatsapp.com/vendors~lazy_loaded_low_priority_components.05e98054dbd60f980427.js:2:44';
+                return error;
+            };
+        });
+        
         await page.goto(WhatsWebURL, {
             waitUntil: "load",
             timeout: 0,
@@ -400,7 +405,23 @@ class Client extends EventEmitter {
             };
         });
 
-        await page.evaluate(ExposeStore, moduleRaid.toString());
+        const version = await this.getWWebVersion();
+        const isCometOrAbove = parseInt(version.split('.')?.[1]) >= 3000;
+
+        if (this.options.webVersionCache.type === 'local' && this.currentIndexHtml) {
+            const { type: webCacheType, ...webCacheOptions } = this.options.webVersionCache;
+            const webCache = WebCacheFactory.createWebCache(webCacheType, webCacheOptions);
+
+            await webCache.persist(this.currentIndexHtml, version);
+        }
+
+        if (isCometOrAbove) {
+            await page.evaluate(ExposeStore);
+        } else {
+            await page.evaluate(ExposeLegacyStore, moduleRaid.toString());
+        }
+
+
         const authEventPayload = await this.authStrategy.getAuthEventPayload();
 
         /**
@@ -754,6 +775,16 @@ class Client extends EventEmitter {
              */
             this.emit(Events.MESSAGE_EDIT, new Message(this, msg), newBody, prevBody);
         });
+        
+        await page.exposeFunction('onAddMessageCiphertextEvent', msg => {
+            
+            /**
+             * Emitted when messages are edited
+             * @event Client#message_ciphertext
+             * @param {Message} message
+             */
+            this.emit(Events.MESSAGE_CIPHERTEXT, new Message(this, msg));
+        });
 
         await page.evaluate(() => {
             window.Store.Msg.on('change', (msg) => { window.onChangeMessageEvent(window.WWebJS.getMessageModel(msg)); });
@@ -761,7 +792,7 @@ class Client extends EventEmitter {
             window.Store.Msg.on('change:ack', (msg, ack) => { window.onMessageAckEvent(window.WWebJS.getMessageModel(msg), ack); });
             window.Store.Msg.on('change:isUnsentMedia', (msg, unsent) => { if (msg.id.fromMe && !unsent) window.onMessageMediaUploadedEvent(window.WWebJS.getMessageModel(msg)); });
             window.Store.Msg.on('remove', (msg) => { if (msg.isNewMsg) window.onRemoveMessageEvent(window.WWebJS.getMessageModel(msg)); });
-            window.Store.Msg.on('change:body', (msg, newBody, prevBody) => { window.onEditMessageEvent(window.WWebJS.getMessageModel(msg), newBody, prevBody); });
+            window.Store.Msg.on('change:body change:caption', (msg, newBody, prevBody) => { window.onEditMessageEvent(window.WWebJS.getMessageModel(msg), newBody, prevBody); });
             window.Store.AppState.on('change:state', (_AppState, state) => { window.onAppStateChangedEvent(state); });
             window.Store.Conn.on('change:battery', (state) => { window.onBatteryStateChangedEvent(state); });
             window.Store.Call.on('add', (call) => { window.onIncomingCall(call); });
@@ -771,11 +802,8 @@ class Client extends EventEmitter {
                 if (msg.isNewMsg) {
                     if (msg.type === "ciphertext") {
                         // defer message event until ciphertext is resolved (type changed)
-                        msg.once("change:type", (_msg) =>
-                            window.onAddMessageEvent(
-                                window.WWebJS.getMessageModel(_msg)
-                            )
-                        );
+                        msg.once('change:type', (_msg) => window.onAddMessageEvent(window.WWebJS.getMessageModel(_msg)));
+                        window.onAddMessageCiphertextEvent(window.WWebJS.getMessageModel(msg));
                     } else {
                         window.onAddMessageEvent(
                             window.WWebJS.getMessageModel(msg)
@@ -854,7 +882,8 @@ class Client extends EventEmitter {
         } else {
             this.pupPage.on('response', async (res) => {
                 if(res.ok() && res.url() === WhatsWebURL) {
-                    await webCache.persist(await res.text());
+                    const indexHtml = await res.text();
+                    this.currentIndexHtml = indexHtml;
                 }
             });
         }
@@ -912,6 +941,13 @@ class Client extends EventEmitter {
     }
 
     /**
+     * An object representing mentions of groups
+     * @typedef {Object} GroupMention
+     * @property {string} subject - The name of a group to mention (can be custom)
+     * @property {string} id - The group ID, e.g.: 'XXXXXXXXXX@g.us'
+     */
+
+    /**
      * Message options.
      * @typedef {Object} MessageSendOptions
      * @property {boolean} [linkPreview=true] - Show links preview. Has no effect on multi-device accounts.
@@ -923,7 +959,8 @@ class Client extends EventEmitter {
      * @property {boolean} [parseVCards=true] - Automatically parse vCards and send them as contacts
      * @property {string} [caption] - Image or video caption
      * @property {string} [quotedMessageId] - Id of the message that is being quoted (or replied to)
-     * @property {Contact[]} [mentions] - Contacts that are being mentioned in the message
+     * @property {GroupMention[]} [groupMentions] - An array of object that handle group mentions
+     * @property {string[]} [mentions] - User IDs to mention in the message
      * @property {boolean} [sendSeen=true] - Mark the conversation as seen after sending the message
      * @property {string} [stickerAuthor=undefined] - Sets the author of the sticker, (if sendMediaAsSticker is true).
      * @property {string} [stickerName=undefined] - Sets the name of the sticker, (if sendMediaAsSticker is true).
@@ -940,10 +977,16 @@ class Client extends EventEmitter {
      * @returns {Promise<Message>} Message that was just sent
      */
     async sendMessage(chatId, content, options = {}) {
-        if (options.mentions && options.mentions.some(possiblyContact => possiblyContact instanceof Contact)) {
-            console.warn('Mentions with an array of Contact are now deprecated. See more at https://github.com/pedroslopez/whatsapp-web.js/pull/2166.');
-            options.mentions = options.mentions.map(a => a.id._serialized);
+        if (options.mentions) {
+            !Array.isArray(options.mentions) && (options.mentions = [options.mentions]);
+            if (options.mentions.some((possiblyContact) => possiblyContact instanceof Contact)) {
+                console.warn('Mentions with an array of Contact are now deprecated. See more at https://github.com/pedroslopez/whatsapp-web.js/pull/2166.');
+                options.mentions = options.mentions.map((a) => a.id._serialized);
+            }
         }
+
+        options.groupMentions && !Array.isArray(options.groupMentions) && (options.groupMentions = [options.groupMentions]);
+
         let internalOptions = {
             linkPreview: options.linkPreview ? true : undefined,
             sendAudioAsVoice: options.sendAudioAsVoice,
@@ -953,7 +996,8 @@ class Client extends EventEmitter {
             caption: options.caption,
             quotedMessageId: options.quotedMessageId,
             parseVCards: options.parseVCards === false ? false : true,
-            mentionedJidList: Array.isArray(options.mentions) ? options.mentions : [],
+            mentionedJidList: options.mentions || [],
+            groupMentions: options.groupMentions,
             extraOptions: options.extra
         };
 
@@ -1015,23 +1059,13 @@ class Client extends EventEmitter {
                 const chatWid = window.Store.WidFactory.createWid(chatId);
                 const chat = await window.Store.Chat.find(chatWid);
 
-                if (sendSeen) {
-                    window.WWebJS.sendSeen(chatId);
-                }
+            if (sendSeen) {
+                await window.WWebJS.sendSeen(chatId);
+            }
 
-                const msg = await window.WWebJS.sendMessage(
-                    chat,
-                    message,
-                    options,
-                    sendSeen
-                );
-                return msg.serialize();
-            },
-            chatId,
-            content,
-            internalOptions,
-            sendSeen
-        );
+            const msg = await window.WWebJS.sendMessage(chat, message, options, sendSeen);
+            return window.WWebJS.getMessageModel(msg);
+        }, chatId, content, internalOptions, sendSeen);
 
         return new Message(this, newMessage);
     }
@@ -1192,16 +1226,10 @@ class Client extends EventEmitter {
      * @returns {Promise<Boolean>}
      */
     async setDisplayName(displayName) {
-        const couldSet = await this.pupPage.evaluate(async (displayName) => {
-            if (!window.Store.Conn.canSetMyPushname()) return false;
-
-            if (window.Store.MDBackend) {
-                // TODO
-                return false;
-            } else {
-                const res = await window.Store.Wap.setPushname(displayName);
-                return !res.status || res.status === 200;
-            }
+        const couldSet = await this.pupPage.evaluate(async displayName => {
+            if(!window.Store.Conn.canSetMyPushname()) return false;
+            await window.Store.Settings.setPushname(displayName);
+            return true;
         }, displayName);
 
         return couldSet;
@@ -1528,7 +1556,7 @@ class Client extends EventEmitter {
                 const statusCode = participant.error ?? 200;
 
                 if (autoSendInviteV4 && statusCode === 403) {
-                    window.Store.ContactCollection.gadd(participant.wid, { silent: true });
+                    window.Store.Contact.gadd(participant.wid, { silent: true });
                     const addParticipantResult = await window.Store.GroupInviteV4.sendGroupInviteMessage(
                         await window.Store.Chat.find(participant.wid),
                         createGroupResult.wid._serialized,
@@ -1756,6 +1784,67 @@ class Client extends EventEmitter {
             const { requesterIds = null, sleep = [250, 500] } = options;
             return await window.WWebJS.membershipRequestAction(groupId, 'Reject', requesterIds, sleep);
         }, groupId, options);
+    }
+
+
+    /**
+     * Setting  autoload download audio
+     * @param {boolean} flag true/false
+     */
+    async setAutoDownloadAudio(flag) {
+        await this.pupPage.evaluate(async flag => {
+            const autoDownload = window.Store.Settings.getAutoDownloadAudio();
+            if (autoDownload === flag) {
+                return flag;
+            }
+            await window.Store.Settings.setAutoDownloadAudio(flag);
+            return flag;
+        }, flag);
+    }
+
+    /**
+     * Setting  autoload download documents
+     * @param {boolean} flag true/false
+     */
+    async setAutoDownloadDocuments(flag) {
+        await this.pupPage.evaluate(async flag => {
+            const autoDownload = window.Store.Settings.getAutoDownloadDocuments();
+            if (autoDownload === flag) {
+                return flag;
+            }
+            await window.Store.Settings.setAutoDownloadDocuments(flag);
+            return flag;
+        }, flag);
+    }
+
+    /**
+     * Setting  autoload download photos
+     * @param {boolean} flag true/false
+     */
+    async setAutoDownloadPhotos(flag) {
+        await this.pupPage.evaluate(async flag => {
+            const autoDownload = window.Store.Settings.getAutoDownloadPhotos();
+            if (autoDownload === flag) {
+                return flag;
+            }
+            await window.Store.Settings.setAutoDownloadPhotos(flag);
+            return flag;
+        }, flag);
+    }
+
+    /**
+     * Setting  autoload download videos
+     * @param {boolean} flag true/false
+     */
+    async setAutoDownloadVideos(flag) {
+        await this.pupPage.evaluate(async flag => {
+            const autoDownload = window.Store.Settings.getAutoDownloadVideos();
+            if (autoDownload === flag) {
+                return flag;
+            }
+            await window.Store.Settings.setAutoDownloadVideos(flag);
+            return flag;
+        }, flag);
     }
 }
 
